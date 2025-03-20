@@ -1,6 +1,11 @@
 # Environment Variables
 .env
 
-# virtual environment
+# Virtual Environment
 venv/
 
+# Cache
+src/__pycache__/
+
+# Data
+data/local/
