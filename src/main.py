@@ -5,11 +5,14 @@ import pandas as pd
 from dotenv import load_dotenv
 from tqdm import tqdm
 
-from langchain_openai import ChatOpenAI
-from langchain.prompts import PromptTemplate
-from langchain.chains import LLMChain
-from langchain_core.output_parsers import PydanticOutputParser
+# from langchain_openai import ChatOpenAI
+# from langchain.prompts import PromptTemplate
+# from langchain.chains import LLMChain
+# from langchain_core.output_parsers import PydanticOutputParser
 
+import matplotlib.pyplot as plt
+import numpy as np
+import statsmodels.api as sm
 
 from models import FinancialHealth
 from parser import parser
@@ -76,69 +79,124 @@ def main():
     # print(f'Done storing Locally')
 
 
-    with open('./data/local/financial_data.json') as f:
+    # Sample data loading
+    with open('./data/local/companyData5.json') as f:
         data = json.load(f)
 
-    df_list = []
-    for item in data:
-        ticker = item["ticker"]
-        for entry in item["revenueData"]:
-            df_list.append({"Ticker": ticker, "Year": entry["year"], "Revenue": entry["value"]})
-
-    df = pd.DataFrame(df_list)
-
-    print(df.head())
-
+    # List of metrics to forecast
     metrics = [
         "revenueData", "grossProfitData", "netIncomeLossData", "operatingIncomeLossData",
         "assetsData", "ppeNetData", "liabilitiesData", "depreciationData", "cashFromOperationData"
     ]
 
-    # Function to clean and fill missing years in financial data
+    # Function to clean financial data
     def clean_financial_data(financial_data):
-        # Return as is if empty
         if not financial_data:
-            return financial_data
-
+            return []  # Return an empty list if the data is missing or empty
+        
         df = pd.DataFrame(financial_data)
         
-        if df.empty or "year" not in df or "value" not in df:
+        # Check if 'year' column exists and is not empty
+        if 'year' not in df or df['year'].isnull().all():
+            print("Error: 'year' column is missing or empty.")
             return []
 
-        # Ensure data is sorted by year
         df = df.sort_values(by="year")
+        
+        # Ensure 'year' is set as index for time series forecasting
         df.set_index("year", inplace=True)
         
-        # Fill missing years
         full_index = range(df.index.min(), df.index.max() + 1)
         df = df.reindex(full_index)
         
         # Interpolate missing values linearly
         df["value"] = df["value"].interpolate(method="linear")
         
-        # Convert back to list of dictionaries
-        cleaned_data = [{"year": int(year), "value": float(value)} for year, value in df.dropna().iterrows()]
-        return cleaned_data
-    
-    # Process each company's financial data
-    cleaned_data = []
-    for company in data:
-        cleaned_company = {
-            "ticker": company["ticker"],
-            "cik": company["cik"]
-        }
+        # Return the cleaned data with 'year' and 'value'
+        return [{"year": int(year), "value": float(value.iloc[0])} for year, value in df.dropna().iterrows()]
+
+
+    # Function to forecast with ARIMA and return combined historical and forecasted data
+    def arima_forecast(financial_data, forecast_years=2):
+        # Convert the financial data into a DataFrame
+        df = pd.DataFrame(financial_data)
+        
+        # Ensure the DataFrame has the required columns: 'year' and 'value'
+        if 'year' not in df or 'value' not in df:
+            print(f"Skipping ARIMA forecast: 'year' or 'value' column missing for {financial_data}")
+            return []
+        
+        # Check if the dataset has less than 2 data points
+        if len(df) < 2:
+            print(f"Skipping ARIMA forecast for data with less than 2 points: {df}")
+            return []  # Skip this dataset
+        
+        df = df.sort_values(by="year")
+        df.set_index("year", inplace=True)
+
+        # Ensure there are no missing values in the 'value' column
+        if df['value'].isnull().all():
+            print(f"Skipping ARIMA forecast: 'value' column is missing or empty for {df['year'].iloc[0]}")
+            return []
+
+        # Fit ARIMA model (p, d, q values are assumed to be (1, 1, 1) for simplicity)
+        try:
+            model = sm.tsa.ARIMA(df['value'], order=(1, 1, 1))
+            model_fit = model.fit()
+        except Exception as e:
+            print(f"Error fitting ARIMA model for {df.index[0]}: {e}")
+            return []
+
+        # Forecast the next `forecast_years` years
+        forecast = model_fit.forecast(steps=forecast_years)
+        
+        # Generate the years for forecasted values
+        forecast_years = [df.index[-1] + i for i in range(1, forecast_years + 1)]
+        forecast_df = pd.DataFrame({'year': forecast_years, 'value': forecast})
+        
+        # Combine historical data and forecasted data
+        result = pd.concat([df, forecast_df.set_index("year")])
+        
+        # Return the result as a dictionary of records
+        return result.reset_index().to_dict(orient="records")
+
+
+
+
+    # Dictionary to store forecasted data for each stock and metric
+    forecasted_results = {}
+
+    for item in data:
+        ticker = item["ticker"]
+        
+        print(f"Processing {ticker}...")  # Debugging step
+        
+        stock_forecasts = {}
         
         for metric in metrics:
-            cleaned_company[metric] = clean_financial_data(company.get(metric, []))
+            if metric in item and item[metric]:  # Check if the metric exists and is not empty
+                print(f"Processing {metric} for {ticker}...")
+                
+                cleaned_data = clean_financial_data(item[metric])
+                
+                # Only proceed if cleaned data is available
+                if cleaned_data:
+                    forecasted_data = arima_forecast(cleaned_data, forecast_years=2)
+                    stock_forecasts[metric] = forecasted_data
+                else:
+                    print(f"Skipping {metric} for {ticker} because it has no valid data.")
+            else:
+                print(f"Skipping {metric} for {ticker} because data is missing or empty.")
         
-        cleaned_data.append(cleaned_company)
+        forecasted_results[ticker] = stock_forecasts
 
-    # Save the cleaned dataset
-    with open("./data/local/financial_data_cleaned.json", "w") as file:
-        json.dump(cleaned_data, file, indent=4)
+    # Save to file
+    with open('./data/local/companyData5_forecast.json', 'w') as outfile:
+        json.dump(forecasted_results, outfile, indent=4)
 
-    print("\n Cleaned dataset has been saved to: ./data/local/financial_data_cleaned.json")
 
+    print(f"Forecasted data has been written")
+    
 
 
 
