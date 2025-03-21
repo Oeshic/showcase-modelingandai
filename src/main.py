@@ -89,5 +89,58 @@ def main():
 
     print(df.head())
 
+    metrics = [
+        "revenueData", "grossProfitData", "netIncomeLossData", "operatingIncomeLossData",
+        "assetsData", "ppeNetData", "liabilitiesData", "depreciationData", "cashFromOperationData"
+    ]
+
+    # Function to clean and fill missing years in financial data
+    def clean_financial_data(financial_data):
+        # Return as is if empty
+        if not financial_data:
+            return financial_data
+
+        df = pd.DataFrame(financial_data)
+        
+        if df.empty or "year" not in df or "value" not in df:
+            return []
+
+        # Ensure data is sorted by year
+        df = df.sort_values(by="year")
+        df.set_index("year", inplace=True)
+        
+        # Fill missing years
+        full_index = range(df.index.min(), df.index.max() + 1)
+        df = df.reindex(full_index)
+        
+        # Interpolate missing values linearly
+        df["value"] = df["value"].interpolate(method="linear")
+        
+        # Convert back to list of dictionaries
+        cleaned_data = [{"year": int(year), "value": float(value)} for year, value in df.dropna().iterrows()]
+        return cleaned_data
+    
+    # Process each company's financial data
+    cleaned_data = []
+    for company in data:
+        cleaned_company = {
+            "ticker": company["ticker"],
+            "cik": company["cik"]
+        }
+        
+        for metric in metrics:
+            cleaned_company[metric] = clean_financial_data(company.get(metric, []))
+        
+        cleaned_data.append(cleaned_company)
+
+    # Save the cleaned dataset
+    with open("./data/local/financial_data_cleaned.json", "w") as file:
+        json.dump(cleaned_data, file, indent=4)
+
+    print("\n Cleaned dataset has been saved to: ./data/local/financial_data_cleaned.json")
+
+
+
+
 if __name__ == "__main__":
     main()
