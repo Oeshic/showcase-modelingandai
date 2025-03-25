@@ -184,14 +184,16 @@ def main():
                     forecasted_data = arima_forecast(cleaned_data, forecast_years=2)
                     stock_forecasts[metric] = forecasted_data
                 else:
+                    # stock_forecasts[metric] = []
                     print(f"Skipping {metric} for {ticker} because it has no valid data.")
             else:
-                print(f"Skipping {metric} for {ticker} because data is missing or empty.")
+                stock_forecasts[metric] = []
+                # print(f"Skipping {metric} for {ticker} because data is missing or empty.")
         
         forecasted_results[ticker] = stock_forecasts
 
     # Save to file
-    with open('./data/local/companyData5_forecast.json', 'w') as outfile:
+    with open('./data/local/companyData5_forecast2.json', 'w') as outfile:
         json.dump(forecasted_results, outfile, indent=4)
 
 
